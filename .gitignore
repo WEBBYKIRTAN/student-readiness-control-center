@@ -1,0 +1,95 @@
+# ==============================
+# Environment variables / Secrets
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# Dependencies
+# ==============================
+node_modules/
+
+# ==============================
+# Build output
+# ==============================
+dist/
+build/
+out/
+
+# ==============================
+# Logs
+# ==============================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ==============================
+# Coverage
+# ==============================
+coverage/
+.nyc_output/
+
+# ==============================
+# TypeScript
+# ==============================
+*.tsbuildinfo
+
+# ==============================
+# Prisma generated files
+# ==============================
+# Keep this ONLY if your generated Prisma client
+# is not meant to be committed
+src/generated/prisma/
+
+# ==============================
+# IDE / Editors
+# ==============================
+.vscode/
+.idea/
+*.iml
+
+# ==============================
+# OS files
+# ==============================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==============================
+# Temporary files
+# ==============================
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# ==============================
+# Testing
+# ==============================
+.nyc_output/
+test-results/
+
+# ==============================
+# Local database / uploads
+# ==============================
+uploads/
+temp/
+tmp/
+
+# ==============================
+# Backend generated files
+# ==============================
+backend/src/generated/prisma/
+
+backend/prisma.config.js
+backend/prisma.config.js.map
+backend/prisma.config.d.ts
+backend/prisma.config.d.ts.map
+
+backend/prisma/seed.js
+backend/prisma/seed.js.map
+backend/prisma/seed.d.ts
+backend/prisma/seed.d.ts.map
