@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -138,9 +139,7 @@ function getInitials(name: string) {
     .join("");
 }
 
-function getAxiosErrorMessage(
-  error: unknown
-): string {
+function getAxiosErrorMessage(error: unknown): string {
   if (!axios.isAxiosError(error)) {
     return "Failed to load students.";
   }
@@ -151,9 +150,12 @@ function getAxiosErrorMessage(
     typeof data === "object" &&
     data !== null &&
     "error" in data &&
-    typeof data.error === "string"
+    typeof data.error === "object" &&
+    data.error !== null &&
+    "message" in data.error &&
+    typeof data.error.message === "string"
   ) {
-    return data.error;
+    return data.error.message;
   }
 
   if (
@@ -165,10 +167,7 @@ function getAxiosErrorMessage(
     return data.message;
   }
 
-  return (
-    error.message ||
-    "Failed to load students."
-  );
+  return error.message || "Failed to load students.";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -228,6 +227,8 @@ export default function StudentsPage() {
   const [searchInput, setSearchInput] =
     useState(urlSearch);
 
+  const searchTimerRef = useRef<number | null>(null);
+
   const [students, setStudents] =
     useState<Student[]>([]);
 
@@ -251,10 +252,9 @@ export default function StudentsPage() {
   /* ------------------------------------------------------------------------ */
   /* Sync Search With URL                                                     */
   /* ------------------------------------------------------------------------ */
-
-  useEffect(() => {
-    setSearchInput(urlSearch);
-  }, [urlSearch]);
+useEffect(() => {
+  setSearchInput(urlSearch);
+}, [urlSearch]);
 
   /* ------------------------------------------------------------------------ */
   /* Fetch Students                                                           */
@@ -303,14 +303,7 @@ export default function StudentsPage() {
           return;
         }
 
-        console.log(
-          "STUDENTS API RESPONSE:",
-          JSON.stringify(
-            response.data,
-            null,
-            2
-          )
-        );
+       
 
         const parsed =
           studentsResponseSchema.safeParse(
@@ -318,14 +311,7 @@ export default function StudentsPage() {
           );
 
         if (!parsed.success) {
-          console.error(
-            "INVALID STUDENTS RESPONSE:",
-            JSON.stringify(
-              parsed.error.format(),
-              null,
-              2
-            )
-          );
+          
 
           setError(
             "The server returned an invalid students response."
@@ -416,16 +402,30 @@ export default function StudentsPage() {
   /* Search                                                                   */
   /* ------------------------------------------------------------------------ */
 
-  const handleSearchChange = (
-    value: string
-  ) => {
+  const handleSearchChange = (value: string) => {
     setSearchInput(value);
 
-    updateQuery({
-      search: value,
-      page: 1,
-    });
+    if (searchTimerRef.current !== null) {
+      window.clearTimeout(searchTimerRef.current);
+    }
+
+    searchTimerRef.current = window.setTimeout(() => {
+      updateQuery({
+        search: value.trim(),
+        page: 1,
+      });
+
+      searchTimerRef.current = null;
+    }, 350);
   };
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current !== null) {
+        window.clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, []);
 
   /* ------------------------------------------------------------------------ */
   /* Status                                                                    */

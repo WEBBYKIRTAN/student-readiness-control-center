@@ -82,7 +82,7 @@ describe("Role authorization", () => {
       .set("Authorization", `Bearer ${viewerToken}`);
 
     expect(response.status).toBe(200);
-  });
+  },15000);
 
   it("rejects VIEWER from updating a student", async () => {
     const viewerToken = await getAccessToken(

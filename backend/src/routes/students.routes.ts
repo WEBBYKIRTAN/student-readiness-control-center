@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "../generated/prisma/client.js";
 
 import { createRequestFingerprint } from "../utils/idempotency.js";
+import { AppError } from "../utils/app-error.js";
 import { operationalEvents } from "../lib/mongo.js";
 
 import {
@@ -91,14 +92,14 @@ router.get(
   async (req: AuthenticatedRequest, res, next) => {
     try {
       const parsed = studentListQuerySchema.safeParse(req.query);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: "Invalid query parameters",
-          details: parsed.error.flatten(),
-        });
-        return;
-      }
+if (!parsed.success) {
+  throw new AppError(
+    400,
+    "VALIDATION_ERROR",
+    "Invalid query parameters",
+    parsed.error.flatten(),
+  );
+}
 
       const {
         search,
@@ -216,11 +217,12 @@ router.post(
       const studentId = req.params.id;
 
       if (typeof studentId !== "string") {
-        res.status(400).json({
-          error: "Invalid student ID",
-        });
-        return;
-      }
+  throw new AppError(
+    400,
+    "INVALID_STUDENT_ID",
+    "Invalid student ID",
+  );
+}
 
       /*
       |--------------------------------------------------------------------------
@@ -231,23 +233,23 @@ router.post(
       const idempotencyKey =
         req.header("Idempotency-Key");
 
-      if (!idempotencyKey) {
-        res.status(400).json({
-          error: "Idempotency-Key header is required",
-        });
-        return;
-      }
-
+     if (!idempotencyKey) {
+  throw new AppError(
+    400,
+    "IDEMPOTENCY_KEY_REQUIRED",
+    "Idempotency-Key header is required",
+  );
+}
       if (
-        idempotencyKey.length < 1 ||
-        idempotencyKey.length > 128
-      ) {
-        res.status(400).json({
-          error: "Invalid Idempotency-Key",
-        });
-        return;
-      }
-
+  idempotencyKey.length < 1 ||
+  idempotencyKey.length > 128
+) {
+  throw new AppError(
+    400,
+    "INVALID_IDEMPOTENCY_KEY",
+    "Invalid Idempotency-Key",
+  );
+}
       /*
       |--------------------------------------------------------------------------
       | Request validation
@@ -257,13 +259,14 @@ router.post(
       const parsed =
         createAttemptSchema.safeParse(req.body);
 
-      if (!parsed.success) {
-        res.status(400).json({
-          error: "Invalid attempt request",
-          details: parsed.error.flatten(),
-        });
-        return;
-      }
+     if (!parsed.success) {
+  throw new AppError(
+    400,
+    "VALIDATION_ERROR",
+    "Invalid attempt request",
+    parsed.error.flatten(),
+  );
+}
 
       /*
       |--------------------------------------------------------------------------
@@ -272,15 +275,15 @@ router.post(
       */
 
       if (
-        req.user!.role !== "ADMIN" &&
-        req.user!.role !== "EVALUATOR"
-      ) {
-        res.status(403).json({
-          error:
-            "You are not allowed to submit attempts",
-        });
-        return;
-      }
+  req.user!.role !== "ADMIN" &&
+  req.user!.role !== "EVALUATOR"
+) {
+  throw new AppError(
+    403,
+    "FORBIDDEN",
+    "You are not allowed to submit attempts",
+  );
+}
 
       const tenantId = req.user!.tenantId;
       const evaluatorId = req.user!.userId;
@@ -324,16 +327,16 @@ router.post(
         /*
         | Same key but different request
         */
-        if (
-          existingRecord.requestFingerprint !==
-          requestFingerprint
-        ) {
-          res.status(409).json({
-            error:
-              "Idempotency key was already used with a different request",
-          });
-          return;
-        }
+       if (
+  existingRecord.requestFingerprint !==
+  requestFingerprint
+) {
+  throw new AppError(
+    409,
+    "IDEMPOTENCY_KEY_REUSED",
+    "Idempotency key was already used with a different request",
+  );
+}
 
         /*
         | Same key + same request
@@ -367,12 +370,11 @@ router.post(
             eventError,
           );
 
-          res.status(503).json({
-            error:
-              "Attempt already exists, but its operational event could not be recorded. Retry the same request.",
-          });
-
-          return;
+          throw new AppError(
+            503,
+            "OPERATIONAL_EVENT_UNAVAILABLE",
+            "Attempt already exists, but its operational event could not be recorded. Retry the same request.",
+          );
         }
 
         res
@@ -583,12 +585,11 @@ router.post(
             existing.requestFingerprint !==
             requestFingerprint
           ) {
-            res.status(409).json({
-              error:
-                "Idempotency key was already used with a different request",
-            });
-
-            return;
+            throw new AppError(
+              409,
+              "IDEMPOTENCY_KEY_REUSED",
+              "Idempotency key was already used with a different request",
+            );
           }
 
           const stored =
@@ -616,12 +617,11 @@ router.post(
               eventError,
             );
 
-            res.status(503).json({
-              error:
-                "Attempt already exists, but its operational event could not be recorded. Retry the same request.",
-            });
-
-            return;
+            throw new AppError(
+              503,
+              "OPERATIONAL_EVENT_UNAVAILABLE",
+              "Attempt already exists, but its operational event could not be recorded. Retry the same request.",
+            );
           }
 
           res
@@ -686,12 +686,11 @@ router.post(
           eventError,
         );
 
-        res.status(503).json({
-          error:
-            "Attempt was saved, but the operational event could not be recorded. Retry the same request with the same Idempotency-Key.",
-        });
-
-        return;
+        throw new AppError(
+          503,
+          "OPERATIONAL_EVENT_UNAVAILABLE",
+          "Attempt was saved, but the operational event could not be recorded. Retry the same request with the same Idempotency-Key.",
+        );
       }
 
       /*
@@ -705,37 +704,36 @@ router.post(
       });
     } catch (error) {
       if (error instanceof Error) {
-        if (
-          error.message ===
-          "STUDENT_NOT_FOUND"
-        ) {
-          res.status(404).json({
-            error: "Student not found",
-          });
-
+        if (error.message === "STUDENT_NOT_FOUND") {
+          next(
+            new AppError(
+              404,
+              "STUDENT_NOT_FOUND",
+              "Student not found",
+            ),
+          );
           return;
         }
 
-        if (
-          error.message ===
-          "EVALUATOR_NOT_FOUND"
-        ) {
-          res.status(403).json({
-            error:
+        if (error.message === "EVALUATOR_NOT_FOUND") {
+          next(
+            new AppError(
+              403,
+              "EVALUATOR_NOT_AUTHORIZED",
               "Evaluator is not authorized for this tenant",
-          });
-
+            ),
+          );
           return;
         }
 
-        if (
-          error.message ===
-          "COMPETENCY_NOT_FOUND"
-        ) {
-          res.status(400).json({
-            error: "Competency not found",
-          });
-
+        if (error.message === "COMPETENCY_NOT_FOUND") {
+          next(
+            new AppError(
+              400,
+              "COMPETENCY_NOT_FOUND",
+              "Competency not found",
+            ),
+          );
           return;
         }
       }
@@ -765,11 +763,11 @@ router.get(
       const studentId = req.params.id;
 
       if (typeof studentId !== "string") {
-        res.status(400).json({
-          error: "Invalid student ID",
-        });
-
-        return;
+        throw new AppError(
+          400,
+          "INVALID_STUDENT_ID",
+          "Invalid student ID",
+        );
       }
 
       const page = Math.max(
@@ -812,11 +810,11 @@ router.get(
         });
 
       if (!student) {
-        res.status(404).json({
-          error: "Student not found",
-        });
-
-        return;
+        throw new AppError(
+          404,
+          "STUDENT_NOT_FOUND",
+          "Student not found",
+        );
       }
 
       const skip = (page - 1) * limit;
@@ -898,11 +896,11 @@ router.patch(
       const studentId = req.params.id;
 
       if (typeof studentId !== "string") {
-        res.status(400).json({
-          error: "Invalid student ID",
-        });
-
-        return;
+        throw new AppError(
+          400,
+          "INVALID_STUDENT_ID",
+          "Invalid student ID",
+        );
       }
 
       const parsed =
@@ -911,25 +909,23 @@ router.patch(
         );
 
       if (!parsed.success) {
-        res.status(400).json({
-          error:
-            "Invalid student update request",
-          details: parsed.error.flatten(),
-        });
-
-        return;
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Invalid student update request",
+          parsed.error.flatten(),
+        );
       }
 
       if (
         req.user!.role !== "ADMIN" &&
         req.user!.role !== "EVALUATOR"
       ) {
-        res.status(403).json({
-          error:
-            "You are not allowed to update students",
-        });
-
-        return;
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "You are not allowed to update students",
+        );
       }
 
       const student = await updateStudent({
@@ -956,26 +952,25 @@ router.patch(
       });
     } catch (error) {
       if (error instanceof Error) {
-        if (
-          error.message ===
-          "STUDENT_NOT_FOUND"
-        ) {
-          res.status(404).json({
-            error: "Student not found",
-          });
-
+        if (error.message === "STUDENT_NOT_FOUND") {
+          next(
+            new AppError(
+              404,
+              "STUDENT_NOT_FOUND",
+              "Student not found",
+            ),
+          );
           return;
         }
 
-        if (
-          error.message ===
-          "VERSION_CONFLICT"
-        ) {
-          res.status(409).json({
-            error:
+        if (error.message === "VERSION_CONFLICT") {
+          next(
+            new AppError(
+              409,
+              "VERSION_CONFLICT",
               "Student was modified by another request. Refresh and try again.",
-          });
-
+            ),
+          );
           return;
         }
       }
@@ -1002,11 +997,11 @@ router.get(
       const studentId = req.params.id;
 
       if (typeof studentId !== "string") {
-        res.status(400).json({
-          error: "Invalid student ID",
-        });
-
-        return;
+        throw new AppError(
+          400,
+          "INVALID_STUDENT_ID",
+          "Invalid student ID",
+        );
       }
 
       /*
@@ -1025,11 +1020,11 @@ router.get(
         });
 
       if (!student) {
-        res.status(404).json({
-          error: "Student not found",
-        });
-
-        return;
+        throw new AppError(
+          404,
+          "STUDENT_NOT_FOUND",
+          "Student not found",
+        );
       }
 
       const readiness =

@@ -1,30 +1,22 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
+
 import app from "../app.js";
 
-const TENANT_A_ID =
-  "550e8400-e29b-41d4-a716-446655440000";
+const TENANT_A_ID = "550e8400-e29b-41d4-a716-446655440000";
+const TENANT_B_ID = "550e8400-e29b-41d4-a716-446655440001";
 
-const TENANT_B_ID =
-  "550e8400-e29b-41d4-a716-446655440001";
-
-const TENANT_A_ADMIN =
-  "admin@tenant-a.com";
-
-const TENANT_B_ADMIN =
-  "admin@tenant-b.com";
+const TENANT_A_ADMIN = "admin@tenant-a.com";
+const TENANT_B_ADMIN = "admin@tenant-b.com";
 
 const PASSWORD = "Password@123";
 
-const TENANT_A_STUDENT_EMAIL =
-  "alice@tenant-a.com";
-
-const TENANT_B_STUDENT_EMAIL =
-  "charlie@tenant-b.com";
+const TENANT_A_STUDENT_EMAIL = "alice@tenant-a.com";
+const TENANT_B_STUDENT_EMAIL = "charlie@tenant-b.com";
 
 async function getAccessToken(
   tenantId: string,
-  email: string
+  email: string,
 ): Promise<string> {
   const response = await request(app)
     .post("/api/auth/login")
@@ -42,7 +34,7 @@ async function getAccessToken(
 
 async function getStudentId(
   token: string,
-  email: string
+  email: string,
 ): Promise<string> {
   const response = await request(app)
     .get("/api/students")
@@ -56,8 +48,7 @@ async function getStudentId(
   expect(response.status).toBe(200);
 
   const student = response.body.data.find(
-    (item: { email: string }) =>
-      item.email === email
+    (item: { email: string }) => item.email === email,
   );
 
   expect(student).toBeTruthy();
@@ -71,36 +62,35 @@ describe("Tenant isolation security", () => {
     async () => {
       const tenantAToken = await getAccessToken(
         TENANT_A_ID,
-        TENANT_A_ADMIN
+        TENANT_A_ADMIN,
       );
 
       const tenantBToken = await getAccessToken(
         TENANT_B_ID,
-        TENANT_B_ADMIN
+        TENANT_B_ADMIN,
       );
 
-      const tenantBStudentId =
-        await getStudentId(
-          tenantBToken,
-          TENANT_B_STUDENT_EMAIL
-        );
+      const tenantBStudentId = await getStudentId(
+        tenantBToken,
+        TENANT_B_STUDENT_EMAIL,
+      );
 
       const response = await request(app)
-        .get(
-          `/api/students/${tenantBStudentId}`
-        )
-        .set(
-          "Authorization",
-          `Bearer ${tenantAToken}`
-        );
+        .get(`/api/students/${tenantBStudentId}`)
+        .set("Authorization", `Bearer ${tenantAToken}`);
 
       expect(response.status).toBe(404);
 
-      expect(response.body.error).toBe(
-        "Student not found"
+      expect(response.body.error).toMatchObject({
+        code: "STUDENT_NOT_FOUND",
+        message: "Student not found",
+      });
+
+      expect(response.body.error.requestId).toEqual(
+        expect.any(String),
       );
     },
-    15000
+    15000,
   );
 
   it(
@@ -108,42 +98,30 @@ describe("Tenant isolation security", () => {
     async () => {
       const tenantAToken = await getAccessToken(
         TENANT_A_ID,
-        TENANT_A_ADMIN
+        TENANT_A_ADMIN,
       );
 
       const tenantBToken = await getAccessToken(
         TENANT_B_ID,
-        TENANT_B_ADMIN
+        TENANT_B_ADMIN,
       );
 
-      const tenantBStudentId =
-        await getStudentId(
-          tenantBToken,
-          TENANT_B_STUDENT_EMAIL
-        );
+      const tenantBStudentId = await getStudentId(
+        tenantBToken,
+        TENANT_B_STUDENT_EMAIL,
+      );
 
       const beforeResponse = await request(app)
-        .get(
-          `/api/students/${tenantBStudentId}`
-        )
-        .set(
-          "Authorization",
-          `Bearer ${tenantBToken}`
-        );
+        .get(`/api/students/${tenantBStudentId}`)
+        .set("Authorization", `Bearer ${tenantBToken}`);
 
       expect(beforeResponse.status).toBe(200);
 
-      const version =
-        beforeResponse.body.data.version;
+      const version = beforeResponse.body.data.version;
 
       const response = await request(app)
-        .patch(
-          `/api/students/${tenantBStudentId}`
-        )
-        .set(
-          "Authorization",
-          `Bearer ${tenantAToken}`
-        )
+        .patch(`/api/students/${tenantBStudentId}`)
+        .set("Authorization", `Bearer ${tenantAToken}`)
         .send({
           name: "Unauthorized Tenant A Update",
           version,
@@ -151,25 +129,88 @@ describe("Tenant isolation security", () => {
 
       expect(response.status).toBe(404);
 
-      expect(response.body.error).toBe(
-        "Student not found"
+      expect(response.body.error).toMatchObject({
+        code: "STUDENT_NOT_FOUND",
+        message: "Student not found",
+      });
+
+      expect(response.body.error.requestId).toEqual(
+        expect.any(String),
       );
 
       const afterResponse = await request(app)
-        .get(
-          `/api/students/${tenantBStudentId}`
-        )
-        .set(
-          "Authorization",
-          `Bearer ${tenantBToken}`
-        );
+        .get(`/api/students/${tenantBStudentId}`)
+        .set("Authorization", `Bearer ${tenantBToken}`);
 
       expect(afterResponse.status).toBe(200);
 
       expect(afterResponse.body.data.name).not.toBe(
-        "Unauthorized Tenant A Update"
+        "Unauthorized Tenant A Update",
       );
     },
-    15000
+    15000,
+  );
+
+  it(
+    "prevents Tenant A from submitting an attempt for Tenant B student",
+    async () => {
+      const tenantAToken = await getAccessToken(
+        TENANT_A_ID,
+        TENANT_A_ADMIN,
+      );
+
+      const tenantBToken = await getAccessToken(
+        TENANT_B_ID,
+        TENANT_B_ADMIN,
+      );
+
+      const tenantBStudentId = await getStudentId(
+        tenantBToken,
+        TENANT_B_STUDENT_EMAIL,
+      );
+
+      const tenantBCompetenciesResponse = await request(app)
+        .get("/api/students")
+        .set("Authorization", `Bearer ${tenantBToken}`)
+        .query({
+          page: 1,
+          pageSize: 20,
+        });
+
+      expect(tenantBCompetenciesResponse.status).toBe(200);
+
+      const studentResponse = await request(app)
+        .get(`/api/students/${tenantBStudentId}`)
+        .set("Authorization", `Bearer ${tenantBToken}`);
+
+      expect(studentResponse.status).toBe(200);
+
+      const competency =
+        studentResponse.body.data.readiness.competencies[0];
+
+      expect(competency).toBeTruthy();
+      expect(competency.competencyId).toBeTruthy();
+
+      const response = await request(app)
+        .post(`/api/students/${tenantBStudentId}/attempts`)
+        .set("Authorization", `Bearer ${tenantAToken}`)
+        .set("Idempotency-Key", `cross-tenant-${Date.now()}`)
+        .send({
+          competencyId: competency.competencyId,
+          score: 85,
+        });
+
+      expect(response.status).toBe(404);
+
+      expect(response.body.error).toMatchObject({
+        code: "STUDENT_NOT_FOUND",
+        message: "Student not found",
+      });
+
+      expect(response.body.error.requestId).toEqual(
+        expect.any(String),
+      );
+    },
+    15000,
   );
 });

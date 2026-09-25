@@ -1,4 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { mockAppendOperationalEvent } = vi.hoisted(() => ({
+  mockAppendOperationalEvent: vi.fn(),
+}));
+
+vi.mock("../services/event.service.js", () => ({
+  appendOperationalEvent: mockAppendOperationalEvent,
+  createRequestId: vi.fn(() => "test-request-id"),
+  createEventId: vi.fn(() => "test-event-id"),
+}));
+
 import request from "supertest";
 import app from "../app.js";
 
@@ -70,7 +81,8 @@ async function getCompetencyId(token: string): Promise<string> {
 }
 
 /**
- * Extract the attempt ID without assuming one exact response shape.
+ * Extract the attempt ID without assuming
+ * one exact response shape.
  */
 function getAttemptId(body: any): string {
   const attemptId =
@@ -239,5 +251,41 @@ describe("Attempt idempotency API", () => {
     );
 
     expect(attemptId1).toBe(attemptId2);
+  });
+
+  it("returns 503 when MongoDB event publishing fails", async () => {
+    const token = await getAdminToken();
+
+    const studentId = await getStudentId(token);
+
+    const competencyId = await getCompetencyId(token);
+
+    const idempotencyKey =
+      `test-mongo-failure-${Date.now()}`;
+
+    const payload = {
+      competencyId,
+      score: 75,
+    };
+
+    mockAppendOperationalEvent.mockRejectedValueOnce(
+      new Error("Simulated MongoDB outage"),
+    );
+
+    const response = await request(app)
+      .post(`/api/students/${studentId}/attempts`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("Idempotency-Key", idempotencyKey)
+      .send(payload);
+
+    expect(response.status).toBe(503);
+
+    const errorMessage = getErrorMessage(
+      response.body,
+    );
+
+    expect(errorMessage).toContain(
+      "operational event",
+    );
   });
 });

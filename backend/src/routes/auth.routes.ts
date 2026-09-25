@@ -1,8 +1,10 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+
 import { prisma } from "../lib/prisma.js";
 import { env } from "../config/env.js";
+
 import {
   authenticate,
   type AuthenticatedRequest,
@@ -12,6 +14,8 @@ import {
   loginSchema,
   registerSchema,
 } from "../validators/auth.schema.js";
+
+import { AppError } from "../utils/app-error.js";
 
 const router = Router();
 
@@ -23,17 +27,15 @@ const router = Router();
 
 router.post("/register", async (req, res, next) => {
   try {
-    const parsed = registerSchema.safeParse(
-      req.body,
-    );
+    const parsed = registerSchema.safeParse(req.body);
 
     if (!parsed.success) {
-      res.status(400).json({
-        error: "Invalid registration request",
-        details: parsed.error.flatten(),
-      });
-
-      return;
+      throw new AppError(
+        400,
+        "VALIDATION_ERROR",
+        "Invalid registration request",
+        parsed.error.flatten(),
+      );
     }
 
     const {
@@ -49,27 +51,26 @@ router.post("/register", async (req, res, next) => {
     |--------------------------------------------------------------------------
     */
 
-    const tenant =
-      await prisma.tenant.findUnique({
-        where: {
-          id: tenantId,
-        },
-      });
+    const tenant = await prisma.tenant.findUnique({
+      where: {
+        id: tenantId,
+      },
+    });
 
     if (!tenant) {
-      res.status(404).json({
-        error: "Tenant not found",
-      });
-
-      return;
+      throw new AppError(
+        404,
+        "TENANT_NOT_FOUND",
+        "Tenant not found",
+      );
     }
 
     if (tenant.status !== "ACTIVE") {
-      res.status(403).json({
-        error: "Tenant is not active",
-      });
-
-      return;
+      throw new AppError(
+        403,
+        "TENANT_INACTIVE",
+        "Tenant is not active",
+      );
     }
 
     /*
@@ -78,23 +79,21 @@ router.post("/register", async (req, res, next) => {
     |--------------------------------------------------------------------------
     */
 
-    const existingUser =
-      await prisma.user.findUnique({
-        where: {
-          tenantId_email: {
-            tenantId,
-            email,
-          },
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        tenantId_email: {
+          tenantId,
+          email,
         },
-      });
+      },
+    });
 
     if (existingUser) {
-      res.status(409).json({
-        error:
-          "An account with this email already exists for this tenant",
-      });
-
-      return;
+      throw new AppError(
+        409,
+        "ACCOUNT_ALREADY_EXISTS",
+        "An account with this email already exists for this tenant",
+      );
     }
 
     /*
@@ -103,8 +102,7 @@ router.post("/register", async (req, res, next) => {
     |--------------------------------------------------------------------------
     */
 
-    const passwordHash =
-      await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 12);
 
     /*
     |--------------------------------------------------------------------------
@@ -145,17 +143,15 @@ router.post("/register", async (req, res, next) => {
 
 router.post("/login", async (req, res, next) => {
   try {
-    const parsed = loginSchema.safeParse(
-      req.body,
-    );
+    const parsed = loginSchema.safeParse(req.body);
 
     if (!parsed.success) {
-      res.status(400).json({
-        error: "Invalid login request",
-        details: parsed.error.flatten(),
-      });
-
-      return;
+      throw new AppError(
+        400,
+        "VALIDATION_ERROR",
+        "Invalid login request",
+        parsed.error.flatten(),
+      );
     }
 
     const {
@@ -166,23 +162,22 @@ router.post("/login", async (req, res, next) => {
 
     /*
     |--------------------------------------------------------------------------
-    | Find user INSIDE authenticated tenant context
+    | Find user inside tenant
     |--------------------------------------------------------------------------
     */
 
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          tenantId_email: {
-            tenantId,
-            email,
-          },
+    const user = await prisma.user.findUnique({
+      where: {
+        tenantId_email: {
+          tenantId,
+          email,
         },
+      },
 
-        include: {
-          tenant: true,
-        },
-      });
+      include: {
+        tenant: true,
+      },
+    });
 
     /*
     |--------------------------------------------------------------------------
@@ -191,11 +186,11 @@ router.post("/login", async (req, res, next) => {
     */
 
     if (!user) {
-      res.status(401).json({
-        error: "Invalid email, password, or tenant",
-      });
-
-      return;
+      throw new AppError(
+        401,
+        "INVALID_CREDENTIALS",
+        "Invalid email, password, or tenant",
+      );
     }
 
     /*
@@ -205,11 +200,11 @@ router.post("/login", async (req, res, next) => {
     */
 
     if (user.tenant.status !== "ACTIVE") {
-      res.status(403).json({
-        error: "Tenant is not active",
-      });
-
-      return;
+      throw new AppError(
+        403,
+        "TENANT_INACTIVE",
+        "Tenant is not active",
+      );
     }
 
     /*
@@ -218,18 +213,17 @@ router.post("/login", async (req, res, next) => {
     |--------------------------------------------------------------------------
     */
 
-    const passwordValid =
-      await bcrypt.compare(
-        password,
-        user.passwordHash,
-      );
+    const passwordValid = await bcrypt.compare(
+      password,
+      user.passwordHash,
+    );
 
     if (!passwordValid) {
-      res.status(401).json({
-        error: "Invalid email, password, or tenant",
-      });
-
-      return;
+      throw new AppError(
+        401,
+        "INVALID_CREDENTIALS",
+        "Invalid email, password, or tenant",
+      );
     }
 
     /*
@@ -237,9 +231,9 @@ router.post("/login", async (req, res, next) => {
     | JWT
     |--------------------------------------------------------------------------
     |
-    | tenantId comes from the database-backed authenticated
-    | user, not from an arbitrary future request.
-    |--------------------------------------------------------------------------
+    | tenantId and role come from the database-backed
+    | authenticated user.
+    |
     */
 
     const payload = {
@@ -248,13 +242,14 @@ router.post("/login", async (req, res, next) => {
       role: user.role,
     };
 
-   const token = jwt.sign(
-  payload,
-  env.jwtSecret,
-  {
-    expiresIn: env.jwtExpiresIn as `${number}${"s" | "m" | "h" | "d" | "w" | "y"}`,
-  },
-);
+    const token = jwt.sign(
+      payload,
+      env.jwtSecret,
+      {
+        expiresIn:
+          env.jwtExpiresIn as `${number}${"s" | "m" | "h" | "d" | "w" | "y"}`,
+      },
+    );
 
     res.status(200).json({
       data: {
@@ -289,44 +284,43 @@ router.get(
     next,
   ) => {
     try {
-      const user =
-        await prisma.user.findFirst({
-          where: {
-            id: req.user!.userId,
-            tenantId: req.user!.tenantId,
-          },
+      const user = await prisma.user.findFirst({
+        where: {
+          id: req.user!.userId,
+          tenantId: req.user!.tenantId,
+        },
 
-          select: {
-            id: true,
-            tenantId: true,
-            email: true,
-            name: true,
-            role: true,
+        select: {
+          id: true,
+          tenantId: true,
+          email: true,
+          name: true,
+          role: true,
 
-            tenant: {
-              select: {
-                id: true,
-                name: true,
-                status: true,
-              },
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
             },
           },
-        });
+        },
+      });
 
       if (!user) {
-        res.status(401).json({
-          error: "User no longer exists",
-        });
-
-        return;
+        throw new AppError(
+          401,
+          "USER_NOT_FOUND",
+          "User no longer exists",
+        );
       }
 
       if (user.tenant.status !== "ACTIVE") {
-        res.status(403).json({
-          error: "Tenant is not active",
-        });
-
-        return;
+        throw new AppError(
+          403,
+          "TENANT_INACTIVE",
+          "Tenant is not active",
+        );
       }
 
       res.status(200).json({

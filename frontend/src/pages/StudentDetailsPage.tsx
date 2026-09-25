@@ -21,9 +21,28 @@ const readinessStatusSchema = z.enum([
   "NEEDS_PREPARATION",
 ]);
 
+const latestAttemptSchema = z.object({
+  id: z.string().uuid(),
+  score: z.number(),
+  submittedAt: z.string(),
+  evaluatorId: z.string().uuid(),
+  evaluatorName: z.string(),
+  evaluatorEmail: z.string(),
+});
+
+const competencyReadinessSchema = z.object({
+  competencyId: z.string().uuid(),
+  key: z.string(),
+  name: z.string(),
+  weight: z.number(),
+  score: z.number().nullable(),
+  latestAttempt: latestAttemptSchema.nullable(),
+});
+
 const readinessSchema = z.object({
   score: z.number().nullable(),
   status: readinessStatusSchema,
+  competencies: z.array(competencyReadinessSchema),
 });
 
 const studentSchema = z.object({
@@ -41,6 +60,11 @@ const studentResponseSchema = z.object({
   data: studentSchema,
 });
 
+const createAttemptSchema = z.object({
+  competencyId: z.string().uuid(),
+  score: z.number().min(0).max(100),
+});
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -55,12 +79,6 @@ type Student = z.infer<typeof studentSchema>;
 /* Required Competencies                                                      */
 /* -------------------------------------------------------------------------- */
 
-const REQUIRED_COMPETENCIES = [
-  "Frontend",
-  "Backend",
-  "Databases",
-  "Problem Solving",
-];
 
 /* -------------------------------------------------------------------------- */
 /* Helper Functions                                                           */
@@ -189,6 +207,7 @@ export default function StudentDetailsPage() {
   const [student, setStudent] =
     useState<Student | null>(null);
 
+
   const [loading, setLoading] =
     useState(true);
 
@@ -197,6 +216,21 @@ export default function StudentDetailsPage() {
 
   const [error, setError] =
     useState<string | null>(null);
+
+       const [selectedCompetencyId, setSelectedCompetencyId] =
+  useState("");
+
+const [attemptScore, setAttemptScore] =
+  useState("");
+
+const [submittingAttempt, setSubmittingAttempt] =
+  useState(false);
+
+const [attemptError, setAttemptError] =
+  useState<string | null>(null);
+
+const [attemptSuccess, setAttemptSuccess] =
+  useState<string | null>(null);
 
   /* ------------------------------------------------------------------------ */
   /* Load Student                                                             */
@@ -273,6 +307,120 @@ export default function StudentDetailsPage() {
     },
     [id]
   );
+
+    /* ------------------------------------------------------------------------ */
+  /* Submit Attempt                                                           */
+  /* ------------------------------------------------------------------------ */
+
+  const submitAttempt = async () => {
+    if (!id) {
+      setAttemptError("Invalid student ID.");
+      return;
+    }
+
+    setAttemptError(null);
+    setAttemptSuccess(null);
+
+    const parsed = createAttemptSchema.safeParse({
+      competencyId: selectedCompetencyId,
+      score: Number(attemptScore),
+    });
+
+    if (!parsed.success) {
+      setAttemptError(
+        "Select a competency and enter a score between 0 and 100.",
+      );
+      return;
+    }
+
+    try {
+      setSubmittingAttempt(true);
+
+      /*
+       * A fresh idempotency key is generated for every new logical
+       * submission. If the same request needs to be retried after
+       * a network/event failure, the backend request should reuse
+       * the same key. For normal UI submissions, one key represents
+       * one logical attempt.
+       */
+      const idempotencyKey = crypto.randomUUID();
+
+      await api.post(
+        `/students/${id}/attempts`,
+        {
+          competencyId: parsed.data.competencyId,
+          score: parsed.data.score,
+        },
+        {
+          headers: {
+            "Idempotency-Key": idempotencyKey,
+          },
+        },
+      );
+
+      setAttemptSuccess(
+        "Attempt submitted successfully.",
+      );
+
+      setSelectedCompetencyId("");
+      setAttemptScore("");
+
+      /*
+       * Reload the student so the new latest attempt,
+       * readiness score and readiness status are immediately
+       * reflected in the UI.
+       */
+      await loadStudent(true);
+    } catch (err) {
+      console.error(
+        "Failed to submit attempt:",
+        err,
+      );
+
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        const data = err.response?.data;
+
+        if (
+          status === 409 &&
+          typeof data === "object" &&
+          data !== null &&
+          "error" in data &&
+          typeof data.error === "string"
+        ) {
+          setAttemptError(data.error);
+        } else if (
+          status === 403
+        ) {
+          setAttemptError(
+            "You are not allowed to submit attempts.",
+          );
+        } else if (
+          status === 400
+        ) {
+          setAttemptError(
+            "Invalid attempt. Check the competency and score.",
+          );
+        } else if (
+          status === 503
+        ) {
+          setAttemptError(
+            "The attempt was saved, but the operational event could not be recorded. Retry the same request.",
+          );
+        } else {
+          setAttemptError(
+            getAxiosErrorMessage(err),
+          );
+        }
+      } else {
+        setAttemptError(
+          "Failed to submit attempt.",
+        );
+      }
+    } finally {
+      setSubmittingAttempt(false);
+    }
+  };
 
   /* ------------------------------------------------------------------------ */
   /* Initial Load                                                             */
@@ -664,48 +812,277 @@ export default function StudentDetailsPage() {
           </div>
         </section>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Competency Evidence                                              */}
+                {/* ---------------------------------------------------------------- */}
+        {/* Submit Attempt                                                   */}
         {/* ---------------------------------------------------------------- */}
 
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <section className="mb-6 rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-6 py-5">
             <h2 className="text-lg font-semibold text-slate-900">
-              Competency Evidence
+              Submit Assessment Attempt
             </h2>
 
             <p className="mt-1 text-sm text-slate-500">
-              Required competencies used for readiness calculation.
+              Record a new competency assessment for this student.
             </p>
           </div>
 
-          <div className="divide-y divide-slate-100">
-            {REQUIRED_COMPETENCIES.map(
-              (competency) => (
-                <div
-                  key={competency}
-                  className="px-6 py-5"
-                >
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="font-semibold text-slate-900">
-                        {competency}
-                      </h3>
-
-                      <p className="mt-1 text-sm text-slate-500">
-                        Required competency
-                      </p>
-                    </div>
-
-                    <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
-                      Attempt data will appear here
-                    </span>
-                  </div>
-                </div>
-              )
+          <div className="px-6 py-6">
+            {attemptSuccess && (
+              <div className="mb-5 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+                <p className="text-sm font-medium text-green-700">
+                  {attemptSuccess}
+                </p>
+              </div>
             )}
+
+            {attemptError && (
+              <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                <p className="text-sm font-medium text-red-700">
+                  {attemptError}
+                </p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-[1fr_220px_auto] md:items-end">
+              {/* Competency */}
+              <div>
+                <label
+                  htmlFor="attempt-competency"
+                  className="mb-2 block text-sm font-medium text-slate-700"
+                >
+                  Competency
+                </label>
+
+                <select
+                  id="attempt-competency"
+                  value={selectedCompetencyId}
+                  onChange={(event) => {
+                    setSelectedCompetencyId(
+                      event.target.value,
+                    );
+                    setAttemptError(null);
+                    setAttemptSuccess(null);
+                  }}
+                  disabled={submittingAttempt}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                >
+                  <option value="">
+                    Select competency
+                  </option>
+
+                  {student.readiness.competencies.map(
+                    (competency) => (
+                      <option
+                        key={competency.competencyId}
+                        value={competency.competencyId}
+                      >
+                        {competency.name} (
+                        {Math.round(
+                          competency.weight * 100,
+                        )}
+                        %)
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+
+              {/* Score */}
+              <div>
+                <label
+                  htmlFor="attempt-score"
+                  className="mb-2 block text-sm font-medium text-slate-700"
+                >
+                  Score
+                </label>
+
+                <input
+                  id="attempt-score"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={attemptScore}
+                  onChange={(event) => {
+                    setAttemptScore(
+                      event.target.value,
+                    );
+                    setAttemptError(null);
+                    setAttemptSuccess(null);
+                  }}
+                  placeholder="0–100"
+                  disabled={submittingAttempt}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                />
+              </div>
+
+              {/* Submit */}
+              <button
+                type="button"
+                onClick={submitAttempt}
+                disabled={
+                  submittingAttempt ||
+                  !selectedCompetencyId ||
+                  attemptScore === ""
+                }
+                className="rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submittingAttempt
+                  ? "Submitting..."
+                  : "Submit Attempt"}
+              </button>
+            </div>
+
+            <p className="mt-4 text-xs text-slate-400">
+              A new attempt is stored as a separate assessment
+              record. The readiness calculation uses the latest
+              non-voided attempt for each competency.
+            </p>
           </div>
         </section>
+
+     {/* ---------------------------------------------------------------- */}
+{/* Competency Evidence                                              */}
+{/* ---------------------------------------------------------------- */}
+{/* ---------------------------------------------------------------- */}
+{/* Competency Evidence                                              */}
+{/* ---------------------------------------------------------------- */}
+
+<section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+  <div className="border-b border-slate-200 px-6 py-5">
+    <h2 className="text-lg font-semibold text-slate-900">
+      Competency Evidence
+    </h2>
+
+    <p className="mt-1 text-sm text-slate-500">
+      Latest non-voided attempt for each competency used in the
+      readiness calculation.
+    </p>
+  </div>
+
+  <div className="divide-y divide-slate-100">
+    {student.readiness.competencies.length === 0 ? (
+      <div className="px-6 py-8 text-center">
+        <p className="text-sm text-slate-500">
+          No competencies are configured.
+        </p>
+      </div>
+    ) : (
+      student.readiness.competencies.map(
+        (competency) => {
+          const attempt =
+            competency.latestAttempt;
+
+          return (
+            <div
+              key={competency.competencyId}
+              className="px-6 py-5"
+            >
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                {/* Competency */}
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-semibold text-slate-900">
+                      {competency.name}
+                    </h3>
+
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
+                      {Math.round(
+                        competency.weight * 100
+                      )}
+                      % weight
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-xs uppercase tracking-wide text-slate-400">
+                    {competency.key}
+                  </p>
+                </div>
+
+                {/* Score */}
+                <div className="shrink-0">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    Score
+                  </p>
+
+                  <p className="mt-1 text-2xl font-bold text-slate-900">
+                    {competency.score !== null
+                      ? `${competency.score}/100`
+                      : "—"}
+                  </p>
+                </div>
+
+                {/* Latest Attempt */}
+                <div className="min-w-0 lg:w-[360px]">
+                  {attempt ? (
+                    <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-green-700">
+                          Latest Attempt
+                        </span>
+
+                        <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                          Recorded
+                        </span>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:justify-between">
+                          <span className="text-xs text-slate-500">
+                            Attempt ID
+                          </span>
+
+                          <span className="break-all font-mono text-xs text-slate-700">
+                            {attempt.id}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-1 sm:flex-row sm:justify-between">
+                          <span className="text-xs text-slate-500">
+                            Evaluator
+                          </span>
+
+                          <span className="text-xs font-medium text-slate-700">
+                            {attempt.evaluatorName}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-1 sm:flex-row sm:justify-between">
+                          <span className="text-xs text-slate-500">
+                            Submitted
+                          </span>
+
+                          <span className="text-xs font-medium text-slate-700">
+                            {formatDate(
+                              attempt.submittedAt
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        No Attempt
+                      </span>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        No valid attempt has been submitted
+                        for this competency.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        }
+      )
+    )}
+  </div>
+</section>
+
 
         {/* ---------------------------------------------------------------- */}
         {/* Activity                                                          */}

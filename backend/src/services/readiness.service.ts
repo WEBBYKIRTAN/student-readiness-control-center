@@ -10,12 +10,22 @@ export const READINESS_STATUSES = [
 
 export type ReadinessStatus = (typeof READINESS_STATUSES)[number];
 
+export type LatestAttemptEvidence = {
+  id: string;
+  score: number;
+  submittedAt: string;
+  evaluatorId: string;
+  evaluatorName: string;
+  evaluatorEmail: string;
+};
+
 export type CompetencyReadiness = {
   competencyId: string;
   key: string;
   name: string;
   weight: number;
   score: number | null;
+  latestAttempt: LatestAttemptEvidence | null;
 };
 
 export type StudentReadiness = {
@@ -28,7 +38,6 @@ export async function calculateStudentReadiness(
   studentId: string,
   tenantId: string,
 ): Promise<StudentReadiness> {
-  // First verify that the student belongs to the authenticated tenant.
   const student = await prisma.student.findFirst({
     where: {
       id: studentId,
@@ -55,6 +64,7 @@ export async function calculateStudentReadiness(
         studentId,
         voided: false,
       },
+
       orderBy: [
         {
           submittedAt: "desc",
@@ -63,18 +73,29 @@ export async function calculateStudentReadiness(
           id: "desc",
         },
       ],
+
       include: {
         competency: true,
+
+        evaluator: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
       },
     }),
   ]);
 
   /*
-   * The first attempt encountered for each competency is the latest
-   * because the query is ordered by:
+   * Because attempts are ordered by:
    *
-   * submittedAt DESC
-   * id DESC
+   *   1. submittedAt DESC
+   *   2. id DESC
+   *
+   * the first attempt encountered for each competency
+   * is the latest valid attempt.
    */
   const latestAttempts = new Map<
     string,
@@ -87,21 +108,39 @@ export async function calculateStudentReadiness(
     }
   }
 
-  const competencyResults: CompetencyReadiness[] = competencies.map(
-    (competency) => {
-      const latestAttempt = latestAttempts.get(competency.id);
+  const competencyResults: CompetencyReadiness[] =
+    competencies.map((competency) => {
+      const latestAttempt =
+        latestAttempts.get(competency.id);
 
       return {
         competencyId: competency.id,
         key: competency.key,
         name: competency.name,
         weight: competency.weight,
-        score: latestAttempt?.score ?? null,
-      };
-    },
-  );
 
-  // Missing even one required competency means INCOMPLETE.
+        score: latestAttempt?.score ?? null,
+
+        latestAttempt: latestAttempt
+          ? {
+              id: latestAttempt.id,
+              score: latestAttempt.score,
+              submittedAt:
+                latestAttempt.submittedAt.toISOString(),
+              evaluatorId: latestAttempt.evaluator.id,
+              evaluatorName:
+                latestAttempt.evaluator.name,
+              evaluatorEmail:
+                latestAttempt.evaluator.email,
+            }
+          : null,
+      };
+    });
+
+  /*
+   * A student cannot receive a readiness score until
+   * every required competency has a latest attempt.
+   */
   const missingCompetency = competencyResults.some(
     (competency) => competency.score === null,
   );
@@ -114,9 +153,13 @@ export async function calculateStudentReadiness(
     };
   }
 
+  /*
+   * Weighted readiness score.
+   */
   const score = competencyResults.reduce(
     (total, competency) =>
-      total + (competency.score ?? 0) * competency.weight,
+      total +
+      (competency.score ?? 0) * competency.weight,
     0,
   );
 
