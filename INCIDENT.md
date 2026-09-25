@@ -82,4 +82,25 @@ Request B ───────────► response B
                     unsafe implementation:
                     display A
 
-                    
+       # Incident 3 — Concurrent Student Update Race
+
+## Symptom
+
+Two evaluators can read the same student record and then attempt to update
+that student using the same version.
+
+Without optimistic concurrency control, both updates could succeed and the
+later update could silently overwrite the earlier update.
+
+Example:
+
+```text
+Evaluator A                    Evaluator B
+
+reads version 10               reads version 10
+      │                              │
+      ▼                              ▼
+updates student                updates student
+      │                              │
+      ▼                              ▼
+version becomes 11             could overwrite A             
