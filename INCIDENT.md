@@ -104,3 +104,35 @@ updates student                updates student
       │                              │
       ▼                              ▼
 version becomes 11             could overwrite A             
+
+# Incident 4 — MongoDB Operational Event Failure
+
+## Symptom
+
+An assessment attempt is stored in PostgreSQL, but the corresponding
+operational event cannot be written to MongoDB.
+
+If the API returned `201 Created` despite the MongoDB failure, the relational
+source of truth and the operational event stream would disagree.
+
+This could cause:
+
+- missing operational activity
+- incomplete incident investigation data
+- incorrect operational reporting
+- a false impression that the event was successfully recorded
+
+## Root Cause
+
+PostgreSQL and MongoDB are separate systems and cannot share the same
+database transaction.
+
+The operation therefore has two stages:
+
+```text
+PostgreSQL transaction
+        ↓
+       COMMIT
+        ↓
+MongoDB operational event
+
